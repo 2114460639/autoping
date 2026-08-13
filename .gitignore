@@ -1,1 +1,10 @@
+# 日志目录（保留目录，忽略内容）
+log/*
+!log/.gitkeep
+
+# 输入法等第三方产生的调试日志
 debug.log
+
+# Python 缓存
+__pycache__/
+*.pyc

@@ -4,6 +4,9 @@ from datetime import datetime
 from pathlib import Path
 import threading
 
+# 项目根目录（scripts/ 的上一级）
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 # =========================
 # 配置
 # =========================
@@ -95,7 +98,7 @@ def check_host(host):
 # =========================
 def main():
 
-    list_file = Path("list.txt")
+    list_file = PROJECT_ROOT / "list.txt"
 
     if not list_file.exists():
         print("未找到 list.txt")
@@ -118,7 +121,7 @@ def main():
         pool.map(check_host, hosts)
 
     # 创建日志目录
-    log_dir = Path("log")
+    log_dir = PROJECT_ROOT / "log"
     log_dir.mkdir(exist_ok=True)
 
     now = datetime.now()
