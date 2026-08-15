@@ -6,6 +6,23 @@ import threading
 
 # 项目根目录（scripts/ 的上一级）
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CONFIG_DIR = PROJECT_ROOT / "config"
+LIST_FILE = CONFIG_DIR / "list.txt"
+
+# 在 PROJECT_ROOT 中可导入 services / utils
+import sys
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from services.host_cache import (
+    resolve_host_cached,
+    load_host_cache,
+    upsert_host_cache_entry,
+)
+from utils.validators import parse_hostname
+
+# 确保 config/list.txt 的 host.json 缓存进入内存（模块已导入会自动加载，这里显式调一次确保）
+load_host_cache()
 
 # =========================
 # 配置
@@ -50,47 +67,85 @@ def ping_host(host, count=1):
         return False, str(e)
 
 
-# =========================
-# 主机检查逻辑
-# =========================
-def check_host(host):
-
-    host = host.strip()
-
+def _normalize(host):
+    host = (host or "").strip()
     if not host:
+        return None
+    try:
+        return parse_hostname(host)
+    except Exception:
+        return host
+
+
+# =========================
+# 主机检查逻辑（与 UI 统一策略：1轮缓存IP，失败→2/3轮外部DNS）
+# =========================
+def check_host(raw_host):
+
+    raw_host = (raw_host or "").strip()
+    if not raw_host:
         return
 
-    # 第一轮
-    alive, _ = ping_host(host, 1)
+    norm = _normalize(raw_host)
+    display = norm or raw_host
+
+    # 第 1 轮：缓存优先
+    t1, used_cache = resolve_host_cached(norm, force_dns=False) if norm else (display, False)
+    if not t1:
+        t1 = display
+    alive, _ = ping_host(t1, 1)
 
     if alive:
-        print(f"[ONLINE ] {host}")
+        tag_cached = f" (缓存IP: {t1})" if used_cache and t1 != display else ""
+        print(f"[ONLINE ] {display}{tag_cached}")
         return
 
-    # 第二轮
-    alive, _ = ping_host(host, 1)
+    # 第 2/3 轮：强制外部 DNS
+    t2, _ = resolve_host_cached(norm, force_dns=True) if norm else (None, False)
+    if not t2:
+        t2 = display
+
+    # 外部 DNS 解析结果落盘：成功填新IP，失败填空值占位
+    if norm and t2 != t1:
+        if t2 != norm:
+            upsert_host_cache_entry(norm, t2)
+        else:
+            upsert_host_cache_entry(norm, "")
+
+    alive, _ = ping_host(t2, 1)
 
     if alive:
-        print(f"[ONLINE ] {host} (Retry)")
+        if t2 != t1:
+            if t2 != norm:
+                print(f"[ONLINE ] {display} (Retry, 缓存IP {t1} 未通, 外部DNS: {t2})")
+            else:
+                print(f"[ONLINE ] {display} (Retry, 缓存IP {t1} 未通, 外部DNS未解析到IP，JSON写空值)")
+        else:
+            print(f"[ONLINE ] {display} (Retry)")
         return
 
-    # 第三轮
-    alive, raw_log = ping_host(host, 3)
+    alive, raw_log = ping_host(t2, 3)
 
     if alive:
         with lock:
             unstable_hosts.append({
-                "host": host,
+                "host": display,
                 "log": raw_log
             })
 
-        print(f"[UNSTABLE] {host}")
+        if t2 != norm:
+            print(f"[UNSTABLE] {display} (缓存IP {t1} 未通, 外部DNS: {t2})")
+        else:
+            print(f"[UNSTABLE] {display} (缓存IP {t1} 未通, 外部DNS未解析到IP，JSON写空值)")
         return
 
     with lock:
-        offline_hosts.append(host)
+        offline_hosts.append(display)
 
-    print(f"[OFFLINE ] {host}")
+    if t2 != norm:
+        print(f"[OFFLINE ] {display} (缓存IP {t1} 未通, 外部DNS: {t2})")
+    else:
+        print(f"[OFFLINE ] {display} (缓存IP {t1} 未通, 外部DNS未解析到IP，JSON写空值)")
 
 
 # =========================
@@ -98,10 +153,10 @@ def check_host(host):
 # =========================
 def main():
 
-    list_file = PROJECT_ROOT / "list.txt"
+    list_file = LIST_FILE
 
     if not list_file.exists():
-        print("未找到 list.txt")
+        print(f"未找到 {list_file}")
         return
 
     with open(list_file, "r", encoding="utf-8") as f:
@@ -115,6 +170,8 @@ def main():
 
     print("=" * 60)
     print(f"开始检查，共 {total} 台主机")
+    print(f"主机清单: {list_file}")
+    print("规则: 第1轮=缓存IP；第1轮失败 → 第2/3轮=外部DNS后再Ping")
     print("=" * 60)
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
@@ -137,6 +194,7 @@ def main():
 
         f.write("=" * 80 + "\n")
         f.write(f"检查时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"主机清单：{list_file}\n")
         f.write(f"总主机数：{total}\n")
         f.write(f"不稳定主机：{len(unstable_hosts)}\n")
         f.write(f"离线主机：{len(offline_hosts)}\n")
