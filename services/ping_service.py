@@ -10,7 +10,7 @@ def create_ping_process(host):
             "-t",
             "-4",
             "-w",
-            "1000"
+            "100"
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

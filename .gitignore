@@ -8,3 +8,15 @@ debug.log
 # Python 缓存
 __pycache__/
 *.pyc
+
+# 本地生成的 DNS 映射（由「解析」按钮写回，不入库）
+config/host.json
+
+# 保证 config 目录可空时也能检出（若将来需要）
+!config/.gitkeep
+
+# 临时代码/复现脚本/调试脚本：不上传远程
+test_*.py
+smoke_*.py
+*.tmp
+
