@@ -138,18 +138,23 @@ def dns_resolve(hostname: str, timeout: float = 3.0):
             )
             text = proc.stdout or ""
             addrs = []
+            in_answer = False  # 是否已进入"名称:"之后的解析结果段
             for ln in text.splitlines():
-                # nslookup 输出有两种：
-                #   "名称:    xxx\r\n地址:  x.x.x.x"
-                #   或者 IP 直接出现在 "Addresses:" / "Address:" 冒号后面
+                # 遇到"服务器"/"Server"行 → 进入 DNS 服务器段，之后的 Address 是 DNS 服务器地址，需跳过
+                if "服务器" in ln or "Server:" in ln or "Server " in ln:
+                    in_answer = False
+                    continue
+                # 遇到"名称:"/"Name:"行 → 进入解析结果段，重置地址列表
                 if "名称:" in ln or "Name:" in ln:
-                    addrs = []  # 下一段 Address 属于目标域名
+                    addrs = []
+                    in_answer = True
                     continue
                 m = re.search(r"(?:地址|Addresses|Address)\s*:\s*((?:\d{1,3}\.){3}\d{1,3})", ln)
-                if m:
+                if m and in_answer:
                     ip = m.group(1)
                     if not ip.startswith("127."):
                         addrs.append(ip)
+            # 取最后一个真实解析结果 IP（DNS 服务器地址已被 in_answer 过滤）
             if addrs:
                 result_container["ip"] = addrs[-1]
                 return
